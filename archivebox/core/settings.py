@@ -20,6 +20,7 @@ from ..config import (
     OUTPUT_DIR,
     LOGS_DIR,
     TIMEZONE,
+    VERSION,
 )
 
 IS_MIGRATING = 'makemigrations' in sys.argv[:3] or 'migrate' in sys.argv[:3]
@@ -309,3 +310,18 @@ LOGGING = {
         }
     },
 }
+
+
+import sentry_sdk
+
+from sentry_sdk.integrations.django import DjangoIntegration
+
+sentry_sdk.init(
+    dsn="https://350a75954ed7555cfd51f38c2eda7e19@o4505770502979584.ingest.sentry.io/4505770504945664",
+    integrations=[DjangoIntegration()],
+    send_default_pii=True,
+    traces_sample_rate=1.0,
+    profiles_sample_rate=1.0,
+    release=f'archivebox@{VERSION}',
+    environment='dev',
+)

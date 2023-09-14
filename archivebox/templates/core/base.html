@@ -5,12 +5,35 @@
     <head>
         <title>Archived Sites</title>
         <meta charset="utf-8" name="viewport" content="width=device-width, initial-scale=1">
+        {{ sentry_trace_meta|default:'<meta name="sentry-trace" content="no sentry info available">' }}
 
         <link rel="stylesheet" href="{% static 'admin/css/base.css' %}">
         <link rel="stylesheet" href="{% static 'admin.css' %}">
         <link rel="stylesheet" href="{% static 'bootstrap.min.css' %}">
         
         <script src="{% static 'jquery.min.js' %}"></script>
+
+        <script
+          src="https://js.sentry-cdn.com/83967041ae6f62be71bb5e662340412f.min.js"
+          crossorigin="anonymous"
+        ></script>
+        <script>
+            Sentry.init({
+              integrations: [new Sentry.BrowserTracing()],
+
+              release: "archivebox@{{VERSION}}",
+              environment: "dev",
+              tracesSampleRate: 1.0,
+              replaysSessionSampleRate: 1.0,
+              replaysOnErrorSampleRate: 1.0,
+              tracePropagationTargets: ["localhost", /^https:\/\/yourserver\.io\/api/],
+              initialScope: {
+                // tags: { autotz: '{{TIME_ZONE}}' },
+                user: { id: '{{user.id}}', username: '{{user.get_username}}', email: '{{user.email}}' },
+              },
+            });
+        </script>
+
         {% block extra_head %}
         {% endblock %}
     </head>
