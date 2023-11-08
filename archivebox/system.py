@@ -14,11 +14,11 @@ from crontab import CronTab
 from .vendor.atomicwrites import atomic_write as lib_atomic_write
 
 from .util import enforce_types, ExtendedEncoder
-from .config import OUTPUT_PERMISSIONS
+from .config import PYTHON_BINARY, OUTPUT_PERMISSIONS, DIR_OUTPUT_PERMISSIONS, ENFORCE_ATOMIC_WRITES
 
 
 
-def run(*args, input=None, capture_output=True, timeout=None, check=False, text=False, start_new_session=True, **kwargs):
+def run(cmd, *args, input=None, capture_output=True, timeout=None, check=False, text=False, start_new_session=True, **kwargs):
     """Patched of subprocess.run to kill forked child subprocesses and fix blocking io making timeout=innefective
         Mostly copied from https://github.com/python/cpython/blob/master/Lib/subprocess.py
     """
@@ -37,7 +37,10 @@ def run(*args, input=None, capture_output=True, timeout=None, check=False, text=
 
     pgid = None
     try:
-        with Popen(*args, start_new_session=start_new_session, **kwargs) as process:
+        if isinstance(cmd, (list, tuple)) and cmd[0].endswith('.py'):
+            cmd = (PYTHON_BINARY, *cmd)
+
+        with Popen(cmd, *args, start_new_session=start_new_session, **kwargs) as process:
             pgid = os.getpgid(process.pid)
             try:
                 stdout, stderr = process.communicate(input, timeout=timeout)
@@ -89,14 +92,24 @@ def atomic_write(path: Union[Path, str], contents: Union[dict, str, bytes], over
             elif isinstance(contents, (bytes, str)):
                 f.write(contents)
     except OSError as e:
-        print(f"[X] OSError: Failed to write {path} with fcntl.F_FULLFSYNC. ({e})")
-        print("    You can store the archive/ subfolder on a hard drive or network share that doesn't support support syncronous writes,")
-        print("    but the main folder containing the index.sqlite3 and ArchiveBox.conf files must be on a filesystem that supports FSYNC.")
-        raise SystemExit(1)
+        if ENFORCE_ATOMIC_WRITES:
+            print(f"[X] OSError: Failed to write {path} with fcntl.F_FULLFSYNC. ({e})")
+            print("    You can store the archive/ subfolder on a hard drive or network share that doesn't support support syncronous writes,")
+            print("    but the main folder containing the index.sqlite3 and ArchiveBox.conf files must be on a filesystem that supports FSYNC.")
+            raise SystemExit(1)
+
+        # retry the write without forcing FSYNC (aka atomic mode)
+        with open(path, mode=mode, encoding=encoding) as f:
+            if isinstance(contents, dict):
+                dump(contents, f, indent=4, sort_keys=True, cls=ExtendedEncoder)
+            elif isinstance(contents, (bytes, str)):
+                f.write(contents)
+
+    # set file permissions
     os.chmod(path, int(OUTPUT_PERMISSIONS, base=8))
 
 @enforce_types
-def chmod_file(path: str, cwd: str='.', permissions: str=OUTPUT_PERMISSIONS) -> None:
+def chmod_file(path: str, cwd: str='.') -> None:
     """chmod -R <permissions> <cwd>/<path>"""
 
     root = Path(cwd) / path
@@ -104,10 +117,15 @@ def chmod_file(path: str, cwd: str='.', permissions: str=OUTPUT_PERMISSIONS) -> 
         raise Exception('Failed to chmod: {} does not exist (did the previous step fail?)'.format(path))
 
     if not root.is_dir():
+        # path is just a plain file
         os.chmod(root, int(OUTPUT_PERMISSIONS, base=8))
     else:
         for subpath in Path(path).glob('**/*'):
-            os.chmod(subpath, int(OUTPUT_PERMISSIONS, base=8))
+            if subpath.is_dir():
+                # directories need execute permissions to be able to list contents
+                os.chmod(subpath, int(DIR_OUTPUT_PERMISSIONS, base=8))
+            else:
+                os.chmod(subpath, int(OUTPUT_PERMISSIONS, base=8))
 
 
 @enforce_types

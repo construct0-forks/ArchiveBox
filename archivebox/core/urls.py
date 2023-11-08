@@ -6,7 +6,7 @@ from django.contrib.staticfiles.urls import staticfiles_urlpatterns
 from django.conf import settings
 from django.views.generic.base import RedirectView
 
-from core.views import HomepageView, SnapshotView, PublicIndexView, AddView
+from core.views import HomepageView, SnapshotView, PublicIndexView, AddView, HealthCheckView
 
 
 # print('DEBUG', settings.DEBUG)
@@ -24,14 +24,19 @@ urlpatterns = [
 
     path('admin/core/snapshot/add/', RedirectView.as_view(url='/add/')),
     path('add/', AddView.as_view(), name='add'),
-    
+
     path('accounts/login/', RedirectView.as_view(url='/admin/login/')),
     path('accounts/logout/', RedirectView.as_view(url='/admin/logout/')),
 
 
     path('accounts/', include('django.contrib.auth.urls')),
     path('admin/', admin.site.urls),
-    
+
+    path('health/', HealthCheckView.as_view(), name='healthcheck'),
+    path('error/', lambda _: 1/0),
+
+    # path('jet_api/', include('jet_django.urls')),  Enable to use https://www.jetadmin.io/integrations/django
+
     path('index.html', RedirectView.as_view(url='/')),
     path('index.json', static.serve, {'document_root': settings.OUTPUT_DIR, 'path': 'index.json'}),
     path('', HomepageView.as_view(), name='Home'),

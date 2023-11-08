@@ -17,6 +17,8 @@ from requests.exceptions import RequestException, ReadTimeout
 
 from .vendor.base32_crockford import encode as base32_encode                            # type: ignore
 from w3lib.encoding import html_body_declared_encoding, http_content_type_encoding
+from os.path import lexists
+from os import remove as remove_file
 
 try:
     import chardet
@@ -59,7 +61,7 @@ URL_REGEX = re.compile(
     r'(?=('
     r'http[s]?://'                    # start matching from allowed schemes
     r'(?:[a-zA-Z]|[0-9]'              # followed by allowed alphanum characters
-    r'|[$-_@.&+]|[!*\(\),]'           #    or allowed symbols
+    r'|[-_$@.&+!*\(\),]'           #    or allowed symbols (keep hyphen first to match literal hyphen)
     r'|(?:%[0-9a-fA-F][0-9a-fA-F]))'  #    or allowed unicode bytes
     r'[^\]\[\(\)<>"\'\s]+'          # stop parsing at these symbols
     r'))',
@@ -219,7 +221,7 @@ def get_headers(url: str, timeout: int=None) -> str:
 def chrome_args(**options) -> List[str]:
     """helper to build up a chrome shell command with arguments"""
 
-    from .config import CHROME_OPTIONS
+    from .config import CHROME_OPTIONS, CHROME_VERSION
 
     options = {**CHROME_OPTIONS, **options}
 
@@ -229,19 +231,29 @@ def chrome_args(**options) -> List[str]:
     cmd_args = [options['CHROME_BINARY']]
 
     if options['CHROME_HEADLESS']:
-        cmd_args += ('--headless',)
-    
+        chrome_major_version = int(re.search(r'\s(\d+)\.\d', CHROME_VERSION)[1])
+        if chrome_major_version >= 111:
+            cmd_args += ("--headless=new",)
+        else:
+            cmd_args += ('--headless',)
+
     if not options['CHROME_SANDBOX']:
         # assume this means we are running inside a docker container
-        # in docker, GPU support is limited, sandboxing is unecessary, 
+        # in docker, GPU support is limited, sandboxing is unecessary,
         # and SHM is limited to 64MB by default (which is too low to be usable).
         cmd_args += (
-            '--no-sandbox',
-            '--disable-gpu',
-            '--disable-dev-shm-usage',
-            '--disable-software-rasterizer',
-            '--run-all-compositor-stages-before-draw',
-            '--hide-scrollbars',
+            "--no-sandbox",
+            "--no-zygote",
+            "--disable-dev-shm-usage",
+            "--disable-software-rasterizer",
+            "--run-all-compositor-stages-before-draw",
+            "--hide-scrollbars",
+            "--window-size=1440,2000",
+            "--autoplay-policy=no-user-gesture-required",
+            "--no-first-run",
+            "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream",
+            "--disable-sync",
         )
 
 
@@ -254,14 +266,24 @@ def chrome_args(**options) -> List[str]:
     if options['RESOLUTION']:
         cmd_args += ('--window-size={}'.format(options['RESOLUTION']),)
 
-    if options['TIMEOUT']:
-        cmd_args += ('--timeout={}'.format(options['TIMEOUT'] * 1000),)
+    if options['CHROME_TIMEOUT']:
+       cmd_args += ('--timeout={}'.format(options['CHROME_TIMEOUT'] * 1000),)
 
     if options['CHROME_USER_DATA_DIR']:
         cmd_args.append('--user-data-dir={}'.format(options['CHROME_USER_DATA_DIR']))
     
     return cmd_args
 
+def chrome_cleanup():
+    """
+    Cleans up any state or runtime files that chrome leaves behind when killed by
+    a timeout or other error
+    """
+
+    from .config import IN_DOCKER
+    
+    if IN_DOCKER and lexists("/home/archivebox/.config/chromium/SingletonLock"):
+        remove_file("/home/archivebox/.config/chromium/SingletonLock")
 
 def ansi_to_html(text):
     """

@@ -9,6 +9,7 @@ from ..util import (
     enforce_types,
     is_static_file,
     chrome_args,
+    chrome_cleanup,
 )
 from ..config import (
     TIMEOUT,
@@ -37,7 +38,7 @@ def save_pdf(link: Link, out_dir: Optional[Path]=None, timeout: int=TIMEOUT) -> 
     out_dir = out_dir or Path(link.link_dir)
     output: ArchiveOutput = 'output.pdf'
     cmd = [
-        *chrome_args(TIMEOUT=timeout),
+        *chrome_args(),
         '--print-to-pdf',
         link.url,
     ]
@@ -54,6 +55,7 @@ def save_pdf(link: Link, out_dir: Optional[Path]=None, timeout: int=TIMEOUT) -> 
     except Exception as err:
         status = 'failed'
         output = err
+        chrome_cleanup()
     finally:
         timer.end()
 

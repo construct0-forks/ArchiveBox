@@ -4,8 +4,9 @@ import os
 import sys
 import shutil
 import platform
+from django.utils import timezone
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 
 from typing import Dict, List, Optional, Iterable, IO, Union
 from crontab import CronTab, CronSlices
@@ -70,7 +71,13 @@ from .config import (
     IS_TTY,
     DEBUG,
     IN_DOCKER,
+    IN_QEMU,
+    PUID,
+    PGID,
     USER,
+    TIMEZONE,
+    ENFORCE_ATOMIC_WRITES,
+    OUTPUT_PERMISSIONS,
     PYTHON_BINARY,
     ARCHIVEBOX_BINARY,
     ONLY_NEW,
@@ -90,11 +97,11 @@ from .config import (
     check_data_folder,
     write_config_file,
     VERSION,
+    COMMIT_HASH,
     CODE_LOCATIONS,
     EXTERNAL_LOCATIONS,
     DATA_LOCATIONS,
     DEPENDENCIES,
-    USE_CHROME,
     CHROME_BINARY,
     CHROME_VERSION,
     YOUTUBEDL_BINARY,
@@ -102,12 +109,12 @@ from .config import (
     SINGLEFILE_VERSION,
     READABILITY_VERSION,
     MERCURY_VERSION,
-    USE_YOUTUBEDL,
-    USE_NODE,
     NODE_VERSION,
     load_all_config,
     CONFIG,
     USER_CONFIG,
+    ADMIN_USERNAME,
+    ADMIN_PASSWORD,
     get_real_name,
     setup_django,
 )
@@ -206,48 +213,62 @@ def help(out_dir: Path=OUTPUT_DIR) -> None:
 def version(quiet: bool=False,
             out_dir: Path=OUTPUT_DIR) -> None:
     """Print the ArchiveBox version and dependency information"""
-
-    if quiet:
-        print(VERSION)
-    else:
-        # ArchiveBox v0.5.6
-        # Cpython Linux Linux-4.19.121-linuxkit-x86_64-with-glibc2.28 x86_64 (in Docker) (in TTY)
-        print('ArchiveBox v{}'.format(VERSION))
+    
+    print(VERSION)
+    
+    if not quiet:
+        # 0.6.3
+        # ArchiveBox v0.6.3 Cpython Linux Linux-4.19.121-linuxkit-x86_64-with-glibc2.28 x86_64 (in Docker) (in TTY)
+        # DEBUG=False IN_DOCKER=True IN_QEMU=False IS_TTY=True TZ=UTC FS_ATOMIC=True FS_REMOTE=False FS_PERMS=644 FS_USER=501:20 SEARCH_BACKEND=ripgrep
+        
         p = platform.uname()
         print(
+            'ArchiveBox v{}'.format(VERSION),
+            *((COMMIT_HASH[:7],) if COMMIT_HASH else ()),
             sys.implementation.name.title(),
             p.system,
             platform.platform(),
             p.machine,
         )
+        OUTPUT_IS_REMOTE_FS = DATA_LOCATIONS['OUTPUT_DIR']['is_mount'] or DATA_LOCATIONS['ARCHIVE_DIR']['is_mount']
         print(
-            f'IN_DOCKER={IN_DOCKER}',
             f'DEBUG={DEBUG}',
+            f'IN_DOCKER={IN_DOCKER}',
+            f'IN_QEMU={IN_QEMU}',
             f'IS_TTY={IS_TTY}',
-            f'TZ={os.environ.get("TZ", "UTC")}',
-            f'SEARCH_BACKEND_ENGINE={SEARCH_BACKEND_ENGINE}',
+            f'TZ={TIMEZONE}',
+            #f'DB=django.db.backends.sqlite3 (({CONFIG["SQLITE_JOURNAL_MODE"]})',  # add this if we have more useful info to show eventually
+            f'FS_ATOMIC={ENFORCE_ATOMIC_WRITES}',
+            f'FS_REMOTE={OUTPUT_IS_REMOTE_FS}',
+            f'FS_USER={PUID}:{PGID}',
+            f'FS_PERMS={OUTPUT_PERMISSIONS}',
+            f'SEARCH_BACKEND={SEARCH_BACKEND_ENGINE}',
         )
         print()
 
         print('{white}[i] Dependency versions:{reset}'.format(**ANSI))
         for name, dependency in DEPENDENCIES.items():
             print(printable_dependency_version(name, dependency))
+            
+            # add a newline between core dependencies and extractor dependencies for easier reading
+            if name == 'ARCHIVEBOX_BINARY':
+                print()
         
         print()
         print('{white}[i] Source-code locations:{reset}'.format(**ANSI))
-        for name, folder in CODE_LOCATIONS.items():
-            print(printable_folder_status(name, folder))
+        for name, path in CODE_LOCATIONS.items():
+            print(printable_folder_status(name, path))
 
         print()
         print('{white}[i] Secrets locations:{reset}'.format(**ANSI))
-        for name, folder in EXTERNAL_LOCATIONS.items():
-            print(printable_folder_status(name, folder))
+        for name, path in EXTERNAL_LOCATIONS.items():
+            print(printable_folder_status(name, path))
 
         print()
         if DATA_LOCATIONS['OUTPUT_DIR']['is_valid']:
             print('{white}[i] Data locations:{reset}'.format(**ANSI))
-            for name, folder in DATA_LOCATIONS.items():
-                print(printable_folder_status(name, folder))
+            for name, path in DATA_LOCATIONS.items():
+                print(printable_folder_status(name, path))
         else:
             print()
             print('{white}[i] Data locations:{reset}'.format(**ANSI))
@@ -403,6 +424,13 @@ def init(force: bool=False, quick: bool=False, setup: bool=False, out_dir: Path=
         write_main_index(list(pending_links.values()), out_dir=out_dir)
 
     print('\n{green}----------------------------------------------------------------------{reset}'.format(**ANSI))
+
+    from django.contrib.auth.models import User
+
+    if (ADMIN_USERNAME and ADMIN_PASSWORD) and not User.objects.filter(username=ADMIN_USERNAME).exists():
+        print('{green}[+] Found ADMIN_USERNAME and ADMIN_PASSWORD configuration options, creating new admin user.{reset}'.format(**ANSI))
+        User.objects.create_superuser(username=ADMIN_USERNAME, password=ADMIN_PASSWORD)
+
     if existing_index:
         print('{green}[√] Done. Verified and updated the existing ArchiveBox collection.{reset}'.format(**ANSI))
     else:
@@ -425,7 +453,7 @@ def init(force: bool=False, quick: bool=False, setup: bool=False, out_dir: Path=
         print('        archivebox server  # then visit http://127.0.0.1:8000')
         print()
         print('    To add new links, you can run:')
-        print("        archivebox add ~/some/path/or/url/to/list_of_links.txt")
+        print("        archivebox add < ~/some/path/to/list_of_links.txt")
         print()
         print('    For more usage and examples, run:')
         print('        archivebox help')
@@ -552,7 +580,8 @@ def oneshot(url: str, extractors: str="", out_dir: Path=OUTPUT_DIR):
 def add(urls: Union[str, List[str]],
         tag: str='',
         depth: int=0,
-        update_all: bool=not ONLY_NEW,
+        update: bool=not ONLY_NEW,
+        update_all: bool=False,
         index_only: bool=False,
         overwrite: bool=False,
         # duplicate: bool=False,  # TODO: reuse the logic from admin.py resnapshot to allow adding multiple snapshots by appending timestamp automatically
@@ -585,6 +614,7 @@ def add(urls: Union[str, List[str]],
         # save verbatim args to sources
         write_ahead_log = save_text_as_source('\n'.join(urls), filename='{ts}-import.txt', out_dir=out_dir)
     
+
     new_links += parse_links_from_source(write_ahead_log, root_url=None, parser=parser)
 
     # If we're going one level deeper, download each link and look for more links
@@ -592,8 +622,11 @@ def add(urls: Union[str, List[str]],
     if new_links and depth == 1:
         log_crawl_started(new_links)
         for new_link in new_links:
-            downloaded_file = save_file_as_source(new_link.url, filename=f'{new_link.timestamp}-crawl-{new_link.domain}.txt', out_dir=out_dir)
-            new_links_depth += parse_links_from_source(downloaded_file, root_url=new_link.url)
+            try:
+                downloaded_file = save_file_as_source(new_link.url, filename=f'{new_link.timestamp}-crawl-{new_link.domain}.txt', out_dir=out_dir)
+                new_links_depth += parse_links_from_source(downloaded_file, root_url=new_link.url)
+            except Exception as err:
+                stderr('[!] Failed to get contents of URL {new_link.url}', err, color='red')
 
     imported_links = list({link.url: link for link in (new_links + new_links_depth)}.values())
     
@@ -616,11 +649,21 @@ def add(urls: Union[str, List[str]],
         if extractors:
             archive_kwargs["methods"] = extractors
 
-        if update_all:
+        stderr()
+
+        ts = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
+        if update:
+            stderr(f'[*] [{ts}] Archiving + updating {len(imported_links)}/{len(all_links)}', len(imported_links), 'URLs from added set...', color='green')
+            archive_links(imported_links, overwrite=overwrite, **archive_kwargs)
+        elif update_all:
+            stderr(f'[*] [{ts}] Archiving + updating {len(all_links)}/{len(all_links)}', len(all_links), 'URLs from entire library...', color='green')
             archive_links(all_links, overwrite=overwrite, **archive_kwargs)
         elif overwrite:
+            stderr(f'[*] [{ts}] Archiving + overwriting {len(imported_links)}/{len(all_links)}', len(imported_links), 'URLs from added set...', color='green')
             archive_links(imported_links, overwrite=True, **archive_kwargs)
         elif new_links:
+            stderr(f'[*] [{ts}] Archiving {len(new_links)}/{len(all_links)} URLs from added set...', color='green')
             archive_links(new_links, overwrite=False, **archive_kwargs)
 
 
@@ -910,34 +953,35 @@ def setup(out_dir: Path=OUTPUT_DIR) -> None:
     stderr('\n[+] Installing enabled ArchiveBox dependencies automatically...', color='green')
 
     stderr('\n    Installing YOUTUBEDL_BINARY automatically using pip...')
-    if USE_YOUTUBEDL:
-        if YOUTUBEDL_VERSION:
-            print(f'{YOUTUBEDL_VERSION} is already installed', YOUTUBEDL_BINARY)
-        else:
-            try:
-                run_shell([
-                    PYTHON_BINARY, '-m', 'pip',
-                    'install',
-                    '--upgrade',
-                    '--no-cache-dir',
-                    '--no-warn-script-location',
-                    'youtube_dl',
-                ], capture_output=False, cwd=out_dir)
-                pkg_path = run_shell([
-                    PYTHON_BINARY, '-m', 'pip',
-                    'show',
-                    'youtube_dl',
-                ], capture_output=True, text=True, cwd=out_dir).stdout.split('Location: ')[-1].split('\n', 1)[0]
-                NEW_YOUTUBEDL_BINARY = Path(pkg_path) / 'youtube_dl' / '__main__.py'
-                os.chmod(NEW_YOUTUBEDL_BINARY, 0o777)
-                assert NEW_YOUTUBEDL_BINARY.exists(), f'youtube_dl must exist inside {pkg_path}'
-                config(f'YOUTUBEDL_BINARY={NEW_YOUTUBEDL_BINARY}', set=True, out_dir=out_dir)
-            except BaseException as e:
-                stderr(f'[X] Failed to install python packages: {e}', color='red')
-                raise SystemExit(1)
+    if YOUTUBEDL_VERSION:
+        print(f'{YOUTUBEDL_VERSION} is already installed', YOUTUBEDL_BINARY)
+    else:
+        try:
+            run_shell([
+                PYTHON_BINARY, '-m', 'pip',
+                'install',
+                '--upgrade',
+                '--no-cache-dir',
+                '--no-warn-script-location',
+                'youtube_dl',
+            ], capture_output=False, cwd=out_dir)
+            pkg_path = run_shell([
+                PYTHON_BINARY, '-m', 'pip',
+                'show',
+                'youtube_dl',
+            ], capture_output=True, text=True, cwd=out_dir).stdout.decode().split('Location: ')[-1].split('\n', 1)[0]
+            NEW_YOUTUBEDL_BINARY = Path(pkg_path) / 'youtube_dl' / '__main__.py'
+            os.chmod(NEW_YOUTUBEDL_BINARY, 0o777)
+            assert NEW_YOUTUBEDL_BINARY.exists(), f'youtube_dl must exist inside {pkg_path}'
+            config(f'YOUTUBEDL_BINARY={NEW_YOUTUBEDL_BINARY}', set=True, out_dir=out_dir)
+        except BaseException as e:                                              # lgtm [py/catch-base-exception]
+            stderr(f'[X] Failed to install python packages: {e}', color='red')
+            raise SystemExit(1)
 
-    stderr('\n    Installing CHROME_BINARY automatically using playwright...')
-    if USE_CHROME:
+    if platform.machine() == 'armv7l':
+        stderr('\n    Skip the automatic installation of CHROME_BINARY because playwright is not available on armv7.')
+    else:
+        stderr('\n    Installing CHROME_BINARY automatically using playwright...')
         if CHROME_VERSION:
             print(f'{CHROME_VERSION} is already installed', CHROME_BINARY)
         else:
@@ -955,56 +999,57 @@ def setup(out_dir: Path=OUTPUT_DIR) -> None:
                 NEW_CHROME_BINARY = proc.stdout.decode().strip() if isinstance(proc.stdout, bytes) else proc.stdout.strip()
                 assert NEW_CHROME_BINARY and len(NEW_CHROME_BINARY), 'CHROME_BINARY must contain a path'
                 config(f'CHROME_BINARY={NEW_CHROME_BINARY}', set=True, out_dir=out_dir)
-            except BaseException as e:
+            except BaseException as e:                                              # lgtm [py/catch-base-exception]
                 stderr(f'[X] Failed to install chromium using playwright: {e.__class__.__name__} {e}', color='red')
                 raise SystemExit(1)
 
     stderr('\n    Installing SINGLEFILE_BINARY, READABILITY_BINARY, MERCURY_BINARY automatically using npm...')
-    if USE_NODE:
-        if not NODE_VERSION:
-            stderr('[X] You must first install node using your system package manager', color='red')
-            hint([
-                'curl -sL https://deb.nodesource.com/setup_15.x | sudo -E bash -',
-                'or to disable all node-based modules run: archivebox config --set USE_NODE=False',
-            ])
+    if not NODE_VERSION:
+        stderr('[X] You must first install node using your system package manager', color='red')
+        hint([
+            'curl -sL https://deb.nodesource.com/setup_15.x | sudo -E bash -',
+            'or to disable all node-based modules run: archivebox config --set USE_NODE=False',
+        ])
+        raise SystemExit(1)
+
+    if all((SINGLEFILE_VERSION, READABILITY_VERSION, MERCURY_VERSION)):
+        print('SINGLEFILE_BINARY, READABILITY_BINARY, and MERCURURY_BINARY are already installed')
+    else:
+        try:
+            # clear out old npm package locations
+            paths = (
+                out_dir / 'package.json',
+                out_dir / 'package_lock.json',
+                out_dir / 'node_modules',
+            )
+            for path in paths:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                elif path.is_file():
+                    os.remove(path)
+
+            shutil.copyfile(PACKAGE_DIR / 'package.json', out_dir / 'package.json')   # copy the js requirements list from the source install into the data dir
+            # lets blindly assume that calling out to npm via shell works reliably cross-platform 🤡 (until proven otherwise via support tickets)
+            run_shell([
+                'npm',
+                'install',
+                '--prefix', str(out_dir),        # force it to put the node_modules dir in this folder
+                '--force',                       # overwrite any existing node_modules
+                '--no-save',                     # don't bother saving updating the package.json or package-lock.json file
+                '--no-audit',                    # don't bother checking for newer versions with security vuln fixes
+                '--no-fund',                     # hide "please fund our project" messages
+                '--loglevel', 'error',           # only show erros (hide warn/info/debug) during installation
+                # these args are written in blood, change with caution
+            ], capture_output=False, cwd=out_dir)
+            os.remove(out_dir / 'package.json')
+        except BaseException as e:                                              # lgtm [py/catch-base-exception]
+            stderr(f'[X] Failed to install npm packages: {e}', color='red')
+            hint(f'Try deleting {out_dir}/node_modules and running it again')
             raise SystemExit(1)
-
-        if all((SINGLEFILE_VERSION, READABILITY_VERSION, MERCURY_VERSION)):
-            print('SINGLEFILE_BINARY, READABILITY_BINARY, and MERCURURY_BINARY are already installed')
-        else:
-            try:
-                # clear out old npm package locations
-                paths = (
-                    out_dir / 'package.json',
-                    out_dir / 'package_lock.json',
-                    out_dir / 'node_modules',
-                )
-                for path in paths:
-                    if path.is_dir():
-                        shutil.rmtree(path, ignore_errors=True)
-                    elif path.is_file():
-                        os.remove(path)
-
-                shutil.copyfile(PACKAGE_DIR / 'package.json', out_dir / 'package.json')
-                run_shell([
-                    'npm',
-                    'install',
-                    '--prefix', str(out_dir),
-                    '--force',
-                    '--no-save',
-                    '--no-audit',
-                    '--no-fund',
-                    '--loglevel', 'error',
-                ], capture_output=False, cwd=out_dir)
-                os.remove(out_dir / 'package.json')
-            except BaseException as e:
-                stderr(f'[X] Failed to install npm packages: {e}', color='red')
-                hint(f'Try deleting {out_dir}/node_modules and running it again')
-                raise SystemExit(1)
 
     stderr('\n[√] Set up ArchiveBox and its dependencies successfully.', color='green')
     
-    run_shell([ARCHIVEBOX_BINARY, '--version'], capture_output=False, cwd=out_dir)
+    run_shell([PYTHON_BINARY, ARCHIVEBOX_BINARY, '--version'], capture_output=False, cwd=out_dir)
 
 @enforce_types
 def config(config_options_str: Optional[str]=None,
@@ -1112,6 +1157,7 @@ def schedule(add: bool=False,
              every: Optional[str]=None,
              depth: int=0,
              overwrite: bool=False,
+             update: bool=not ONLY_NEW,
              import_path: Optional[str]=None,
              out_dir: Path=OUTPUT_DIR):
     """Set ArchiveBox to regularly import URLs at specific times using cron"""
@@ -1141,6 +1187,7 @@ def schedule(add: bool=False,
             *([
                 'add',
                 *(['--overwrite'] if overwrite else []),
+                *(['--update'] if update else []),
                 f'--depth={depth}',
                 f'"{import_path}"',
             ] if import_path else ['update']),

@@ -34,6 +34,7 @@ from ..index.schema import Link
 from ..logging_util import TimedProgress, log_source_saved
 
 from . import pocket_api
+from . import readwise_reader_api
 from . import wallabag_atom
 from . import pocket_html
 from . import pinboard_rss
@@ -51,6 +52,7 @@ from . import url_list
 PARSERS = {
     # Specialized parsers
     pocket_api.KEY:     (pocket_api.NAME,       pocket_api.PARSER),
+    readwise_reader_api.KEY: (readwise_reader_api.NAME, readwise_reader_api.PARSER),
     wallabag_atom.KEY:  (wallabag_atom.NAME,    wallabag_atom.PARSER),
     pocket_html.KEY:    (pocket_html.NAME,      pocket_html.PARSER),
     pinboard_rss.KEY:   (pinboard_rss.NAME,     pinboard_rss.PARSER),
@@ -149,7 +151,17 @@ def run_parser_functions(to_parse: IO[str], timer, root_url: Optional[str]=None,
 def save_text_as_source(raw_text: str, filename: str='{ts}-stdin.txt', out_dir: Path=OUTPUT_DIR) -> str:
     ts = str(datetime.now(timezone.utc).timestamp()).split('.', 1)[0]
     source_path = str(out_dir / SOURCES_DIR_NAME / filename.format(ts=ts))
-    atomic_write(source_path, raw_text)
+
+    referenced_texts = ''
+
+    for entry in raw_text.split():
+        try:
+            if Path(entry).exists():
+                referenced_texts += Path(entry).read_text()
+        except Exception as err:
+            print(err)
+
+    atomic_write(source_path, raw_text + '\n' + referenced_texts)
     log_source_saved(source_file=source_path)
     return source_path
 
@@ -176,7 +188,7 @@ def save_file_as_source(path: str, timeout: int=TIMEOUT, filename: str='{ts}-{ba
                 ANSI['reset'],
             ))
             print('    ', e)
-            raise SystemExit(1)
+            raise e
 
     else:
         # Source is a path to a local file on the filesystem
@@ -223,6 +235,10 @@ _test_url_strs = {
     'https://example.com/?what=1#how-about-this=1&2%20baf': 1,
     'https://example.com?what=1#how-about-this=1&2%20baf': 1,
     '<test>http://example7.com</test>': 1,
+    'https://<test>': 0,
+    'https://[test]': 0,
+    'http://"test"': 0,
+    'http://\'test\'': 0,
     '[https://example8.com/what/is/this.php?what=1]': 1,
     '[and http://example9.com?what=1&other=3#and-thing=2]': 1,
     '<what>https://example10.com#and-thing=2 "</about>': 1,

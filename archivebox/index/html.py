@@ -24,6 +24,7 @@ from ..config import (
     FOOTER_INFO,
     HTML_INDEX_FILENAME,
     SAVE_ARCHIVE_DOT_ORG,
+    PREVIEW_ORIGINALS,
 )
 
 MAIN_INDEX_TEMPLATE = 'static_index.html'
@@ -105,6 +106,7 @@ def link_details_template(link: Link) -> str:
         'status_color': 'success' if link.is_archived else 'danger',
         'oldest_archive_date': ts_to_date_str(link.oldest_archive_date),
         'SAVE_ARCHIVE_DOT_ORG': SAVE_ARCHIVE_DOT_ORG,
+        'PREVIEW_ORIGINALS': PREVIEW_ORIGINALS,
     })
 
 @enforce_types
@@ -175,7 +177,7 @@ def snapshot_icons(snapshot) -> str:
                 # The check for archive_org is different, so it has to be handled separately
 
                 # get from db (faster)
-                exists = extractor_outputs[extractor] and extractor_outputs[extractor].status == 'succeeded' and extractor_outputs[extractor].output
+                exists = extractor in extractor_outputs and extractor_outputs[extractor] and extractor_outputs[extractor].status == 'succeeded' and extractor_outputs[extractor].output
                 # get from filesystem (slower)
                 # target_path = Path(path) / "archive.org.txt"
                 # exists = target_path.exists()

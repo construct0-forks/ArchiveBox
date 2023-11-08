@@ -41,7 +41,7 @@ class ConfigDict(BaseConfig, total=False):
     MEDIA_TIMEOUT: int
     OUTPUT_PERMISSIONS: str
     RESTRICT_FILE_NAMES: str
-    URL_BLACKLIST: str
+    URL_DENYLIST: str
 
     SECRET_KEY: Optional[str]
     BIND_ADDR: str
@@ -74,6 +74,7 @@ class ConfigDict(BaseConfig, total=False):
     CHROME_USER_AGENT: str
     COOKIES_FILE: Union[str, Path, None]
     CHROME_USER_DATA_DIR: Union[str, Path, None]
+    CHROME_TIMEOUT: int
     CHROME_HEADLESS: bool
     CHROME_SANDBOX: bool
 
@@ -98,6 +99,7 @@ class ConfigDict(BaseConfig, total=False):
     WGET_ARGS: List[str]
     CURL_ARGS: List[str]
     GIT_ARGS: List[str]
+    TAG_SEPARATOR_PATTERN: str
 
 
 ConfigDefaultValueGetter = Callable[[ConfigDict], ConfigValue]

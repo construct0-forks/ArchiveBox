@@ -13,6 +13,8 @@ venv/
 node_modules/
 
 # Packaging artifacts
+.pdm-python
+.pdm-build
 archivebox.egg-info
 archivebox-*.tar.gz
 build/
@@ -24,3 +26,6 @@ data1/
 data2/
 data3/
 output/
+
+# vim
+*.sw?

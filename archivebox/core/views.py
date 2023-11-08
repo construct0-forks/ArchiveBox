@@ -11,6 +11,8 @@ from django.views.generic.list import ListView
 from django.views.generic import FormView
 from django.db.models import Q
 from django.contrib.auth.mixins import UserPassesTestMixin
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
 from core.models import Snapshot
 from core.forms import AddLinkForm
@@ -36,7 +38,7 @@ class HomepageView(View):
 
         if PUBLIC_INDEX:
             return redirect('/public')
-        
+
         return redirect(f'/admin/login/?next={request.path}')
 
 
@@ -203,7 +205,7 @@ class SnapshotView(View):
                 content_type="text/html",
                 status=404,
             )
-        
+
 
 class PublicIndexView(ListView):
     template_name = 'public_index.html'
@@ -218,7 +220,7 @@ class PublicIndexView(ListView):
             'FOOTER_INFO': FOOTER_INFO,
         }
 
-    def get_queryset(self, **kwargs): 
+    def get_queryset(self, **kwargs):
         qs = super().get_queryset(**kwargs)
         query = self.request.GET.get('q')
         if query and query.strip():
@@ -236,7 +238,7 @@ class PublicIndexView(ListView):
         else:
             return redirect(f'/admin/login/?next={self.request.path}')
 
-
+@method_decorator(csrf_exempt, name='dispatch')
 class AddView(UserPassesTestMixin, FormView):
     template_name = "add.html"
     form_class = AddLinkForm
@@ -247,7 +249,7 @@ class AddView(UserPassesTestMixin, FormView):
             url = self.request.GET.get('url', None)
             if url:
                 return {'url': url if '://' in url else f'https://{url}'}
-        
+
         return super().get_initial()
 
     def test_func(self):
@@ -293,3 +295,18 @@ class AddView(UserPassesTestMixin, FormView):
             "form": AddLinkForm()
         })
         return render(template_name=self.template_name, request=self.request, context=context)
+
+
+class HealthCheckView(View):
+    """
+    A Django view that renders plain text "OK" for service discovery tools
+    """
+    def get(self, request):
+        """
+        Handle a GET request
+        """
+        return HttpResponse(
+            'OK',
+            content_type='text/plain',
+            status=200
+        )

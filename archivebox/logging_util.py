@@ -108,12 +108,12 @@ def reject_stdin(caller: str, stdin: Optional[IO]=sys.stdin) -> None:
     if not stdin.isatty():
         # stderr('READING STDIN TO REJECT...')
         stdin_raw_text = stdin.read()
-        if stdin_raw_text:
+        if stdin_raw_text.strip():
             # stderr('GOT STDIN!', len(stdin_str))
-            stderr(f'[X] The "{caller}" command does not accept stdin.', color='red')
+            stderr(f'[!] The "{caller}" command does not accept stdin (ignoring).', color='red')
             stderr(f'    Run archivebox "{caller} --help" to see usage and examples.')
             stderr()
-            raise SystemExit(1)
+            # raise SystemExit(1)
     return None
 
 
@@ -432,10 +432,16 @@ def log_archive_method_finished(result: "ArchiveResult"):
         # Prettify error output hints string and limit to five lines
         hints = getattr(result.output, 'hints', None) or ()
         if hints:
-            hints = hints if isinstance(hints, (list, tuple)) else hints.split('\n')
+            if isinstance(hints, (list, tuple, type(_ for _ in ()))):
+                hints = [hint.decode() for hint in hints if isinstance(hint, bytes)]
+            else:
+                if isinstance(hints, bytes):
+                    hints = hints.decode()
+                hints = hints.split('\n')
+
             hints = (
                 '    {}{}{}'.format(ANSI['lightyellow'], line.strip(), ANSI['reset'])
-                for line in hints[:5] if line.strip()
+                for line in list(hints)[:5] if line.strip()
             )
 
 
@@ -527,11 +533,27 @@ def log_shell_welcome_msg():
 ### Helpers
 
 @enforce_types
-def pretty_path(path: Union[Path, str]) -> str:
+def pretty_path(path: Union[Path, str], pwd: Union[Path, str]=OUTPUT_DIR) -> str:
     """convert paths like .../ArchiveBox/archivebox/../output/abc into output/abc"""
-    pwd = Path('.').resolve()
-    # parent = os.path.abspath(os.path.join(pwd, os.path.pardir))
-    return str(path).replace(str(pwd) + '/', './')
+    pwd = str(Path(pwd))  # .resolve()
+    path = str(path)
+
+    if not path:
+        return path
+
+    # replace long absolute paths with ./ relative ones to save on terminal output width
+    if path.startswith(pwd) and (pwd != '/'):
+        path = path.replace(pwd, '.', 1)
+    
+    # quote paths containing spaces
+    if ' ' in path:
+        path = f'"{path}"'
+
+    # if path is just a plain dot, replace it back with the absolute path for clarity
+    if path == '.':
+        path = pwd
+
+    return path
 
 
 @enforce_types
@@ -566,11 +588,12 @@ def printable_config(config: ConfigDict, prefix: str='') -> str:
 def printable_folder_status(name: str, folder: Dict) -> str:
     if folder['enabled']:
         if folder['is_valid']:
-            color, symbol, note = 'green', '√', 'valid'
+            color, symbol, note, num_files = 'green', '√', 'valid', ''
         else:
             color, symbol, note, num_files = 'red', 'X', 'invalid', '?'
     else:
         color, symbol, note, num_files = 'lightyellow', '-', 'disabled', '-'
+
 
     if folder['path']:
         if Path(folder['path']).exists():
@@ -581,14 +604,12 @@ def printable_folder_status(name: str, folder: Dict) -> str:
             )
         else:
             num_files = 'missing'
+        
+    if folder.get('is_mount'):
+        # add symbol @ next to filecount if path is a remote filesystem mount
+        num_files = f'{num_files} @' if num_files else '@'
 
-    path = str(folder['path']).replace(str(OUTPUT_DIR), '.') if folder['path'] else ''
-    if path and ' ' in path:
-        path = f'"{path}"'
-
-    # if path is just a plain dot, replace it back with the full path for clarity
-    if path == '.':
-        path = str(OUTPUT_DIR)
+    path = pretty_path(folder['path'])
 
     return ' '.join((
         ANSI[color],
@@ -619,9 +640,7 @@ def printable_dependency_version(name: str, dependency: Dict) -> str:
     else:
         color, symbol, note, version = 'lightyellow', '-', 'disabled', '-'
 
-    path = str(dependency["path"]).replace(str(OUTPUT_DIR), '.') if dependency["path"] else ''
-    if path and ' ' in path:
-        path = f'"{path}"'
+    path = pretty_path(dependency['path'])
 
     return ' '.join((
         ANSI[color],

@@ -19,7 +19,18 @@ from ..config import (
     SQL_INDEX_FILENAME,
     OUTPUT_DIR,
     LOGS_DIR,
-    TIME_ZONE,
+    TIMEZONE,
+
+    LDAP,
+    LDAP_SERVER_URI,
+    LDAP_BIND_DN,
+    LDAP_BIND_PASSWORD,
+    LDAP_USER_BASE,
+    LDAP_USER_FILTER,
+    LDAP_USERNAME_ATTR,
+    LDAP_FIRSTNAME_ATTR,
+    LDAP_LASTNAME_ATTR,
+    LDAP_EMAIL_ATTR,
 )
 
 IS_MIGRATING = 'makemigrations' in sys.argv[:3] or 'migrate' in sys.argv[:3]
@@ -34,7 +45,8 @@ WSGI_APPLICATION = 'core.wsgi.application'
 ROOT_URLCONF = 'core.urls'
 
 LOGIN_URL = '/accounts/login/'
-LOGOUT_REDIRECT_URL = '/'
+LOGOUT_REDIRECT_URL = os.environ.get('LOGOUT_REDIRECT_URL', '/')
+
 PASSWORD_RESET_URL = '/accounts/password_reset/'
 APPEND_SLASH = True
 
@@ -54,6 +66,12 @@ INSTALLED_APPS = [
 ]
 
 
+# For usage with https://www.jetadmin.io/integrations/django
+# INSTALLED_APPS += ['jet_django']
+# JET_PROJECT = 'archivebox'
+# JET_TOKEN = 'some-api-token-here'
+
+
 MIDDLEWARE = [
     'core.middleware.TimezoneMiddleware',
     'django.middleware.security.SecurityMiddleware',
@@ -61,13 +79,62 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.ReverseProxyAuthMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'core.middleware.CacheControlMiddleware',
 ]
 
+################################################################################
+### Authentication Settings
+################################################################################
+
 AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.RemoteUserBackend',
     'django.contrib.auth.backends.ModelBackend',
 ]
+
+if LDAP:
+    try:
+        import ldap
+        from django_auth_ldap.config import LDAPSearch
+
+        global AUTH_LDAP_SERVER_URI
+        global AUTH_LDAP_BIND_DN
+        global AUTH_LDAP_BIND_PASSWORD
+        global AUTH_LDAP_USER_SEARCH
+        global AUTH_LDAP_USER_ATTR_MAP
+
+        AUTH_LDAP_SERVER_URI = LDAP_SERVER_URI
+        AUTH_LDAP_BIND_DN = LDAP_BIND_DN
+        AUTH_LDAP_BIND_PASSWORD = LDAP_BIND_PASSWORD
+
+        assert AUTH_LDAP_SERVER_URI and LDAP_USERNAME_ATTR and LDAP_USER_FILTER, 'LDAP_* config options must all be set if LDAP=True'
+
+        AUTH_LDAP_USER_SEARCH = LDAPSearch(
+            LDAP_USER_BASE,
+            ldap.SCOPE_SUBTREE,
+            '(&(' + LDAP_USERNAME_ATTR + '=%(user)s)' + LDAP_USER_FILTER + ')',
+        )
+
+        AUTH_LDAP_USER_ATTR_MAP = {
+            'username': LDAP_USERNAME_ATTR,
+            'first_name': LDAP_FIRSTNAME_ATTR,
+            'last_name': LDAP_LASTNAME_ATTR,
+            'email': LDAP_EMAIL_ATTR,
+        }
+
+        AUTHENTICATION_BACKENDS = [
+            'django_auth_ldap.backend.LDAPBackend',
+        ]
+    except ModuleNotFoundError:
+        sys.stderr.write('[X] Error: Found LDAP=True config but LDAP packages not installed. You may need to run: pip install archivebox[ldap]\n\n')
+        # dont hard exit here. in case the user is just running "archivebox version" or "archivebox help", we still want those to work despite broken ldap
+        # sys.exit(1)
+
+
+################################################################################
+### Debug Settings
+################################################################################
 
 # only enable debug toolbar when in DEBUG mode with --nothreading (it doesnt work in multithreaded mode)
 DEBUG_TOOLBAR = DEBUG and ('--nothreading' in sys.argv) and ('--reload' not in sys.argv)
@@ -154,7 +221,7 @@ DATABASES = {
             'timeout': 60,
             'check_same_thread': False,
         },
-        'TIME_ZONE': 'UTC',
+        'TIME_ZONE': TIMEZONE,
         # DB setup is sometimes modified at runtime by setup_django() in config.py
     }
 }
@@ -224,7 +291,8 @@ USE_L10N = True
 USE_TZ = True
 DATETIME_FORMAT = 'Y-m-d g:iA'
 SHORT_DATETIME_FORMAT = 'Y-m-d h:iA'
-TIME_ZONE = TIME_ZONE                            # noqa
+TIME_ZONE = TIMEZONE        # django convention is TIME_ZONE, archivebox config uses TIMEZONE, they are equivalent
+
 
 from django.conf.locale.en import formats as en_formats
 
@@ -263,8 +331,8 @@ class NoisyRequestsFilter(logging.Filter):
 if LOGS_DIR.exists():
     ERROR_LOG = (LOGS_DIR / 'errors.log')
 else:
-    # meh too many edge cases here around creating log dir w/ correct permissions
-    # cant be bothered, just trash the log and let them figure it out via stdout/stderr
+    # historically too many edge cases here around creating log dir w/ correct permissions early on
+    # if there's an issue on startup, we trash the log and let user figure it out via stdout/stderr
     ERROR_LOG = tempfile.NamedTemporaryFile().name
 
 LOGGING = {

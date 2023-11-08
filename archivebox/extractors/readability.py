@@ -10,9 +10,7 @@ from ..index.schema import Link, ArchiveResult, ArchiveError
 from ..system import run, atomic_write
 from ..util import (
     enforce_types,
-    download_url,
     is_static_file,
-    
 )
 from ..config import (
     TIMEOUT,
@@ -22,28 +20,8 @@ from ..config import (
     READABILITY_VERSION,
 )
 from ..logging_util import TimedProgress
+from .title import get_html
 
-@enforce_types
-def get_html(link: Link, path: Path) -> str:
-    """
-    Try to find wget, singlefile and then dom files.
-    If none is found, download the url again.
-    """
-    canonical = link.canonical_outputs()
-    abs_path = path.absolute()
-    sources = [canonical["singlefile_path"], canonical["wget_path"], canonical["dom_path"]]
-    document = None
-    for source in sources:
-        try:
-            with open(abs_path / source, "r", encoding="utf-8") as f:
-                document = f.read()
-                break
-        except (FileNotFoundError, TypeError):
-            continue
-    if document is None:
-        return download_url(link.url)
-    else:
-        return document
 
 @enforce_types
 def should_save_readability(link: Link, out_dir: Optional[str]=None, overwrite: Optional[bool]=False) -> bool:
@@ -87,12 +65,13 @@ def save_readability(link: Link, out_dir: Optional[str]=None, timeout: int=TIMEO
         cmd = [
             DEPENDENCIES['READABILITY_BINARY']['path'],
             temp_doc.name,
+            link.url,
         ]
 
         result = run(cmd, cwd=out_dir, timeout=timeout)
         try:
             result_json = json.loads(result.stdout)
-            assert result_json and 'content' in result_json
+            assert result_json and 'content' in result_json, 'Readability output is not valid JSON'
         except json.JSONDecodeError:
             raise ArchiveError('Readability was not able to archive the page', result.stdout + result.stderr)
 
@@ -106,7 +85,7 @@ def save_readability(link: Link, out_dir: Optional[str]=None, timeout: int=TIMEO
         #  "Downloaded: 76 files, 4.0M in 1.6s (2.52 MB/s)"
         output_tail = [
             line.strip()
-            for line in (result.stdout + result.stderr).decode().rsplit('\n', 3)[-3:]
+            for line in (result.stdout + result.stderr).decode().rsplit('\n', 5)[-5:]
             if line.strip()
         ]
         hints = (

@@ -9,6 +9,7 @@ from ..util import (
     enforce_types,
     is_static_file,
     chrome_args,
+    chrome_cleanup,
 )
 from ..config import (
     TIMEOUT,
@@ -26,7 +27,8 @@ def should_save_dom(link: Link, out_dir: Optional[Path]=None, overwrite: Optiona
 
     out_dir = out_dir or Path(link.link_dir)
     if not overwrite and (out_dir / 'output.html').exists():
-        return False
+        if (out_dir / 'output.html').stat().st_size > 1:
+            return False
 
     return SAVE_DOM
 
@@ -38,7 +40,7 @@ def save_dom(link: Link, out_dir: Optional[Path]=None, timeout: int=TIMEOUT) -> 
     output: ArchiveOutput = 'output.html'
     output_path = out_dir / output
     cmd = [
-        *chrome_args(TIMEOUT=timeout),
+        *chrome_args(),
         '--dump-dom',
         link.url
     ]
@@ -56,6 +58,7 @@ def save_dom(link: Link, out_dir: Optional[Path]=None, timeout: int=TIMEOUT) -> 
     except Exception as err:
         status = 'failed'
         output = err
+        chrome_cleanup()
     finally:
         timer.end()
 
